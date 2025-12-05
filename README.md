@@ -1,23 +1,16 @@
 # MyDarts
 
-This template should help get you started developing with Vue 3 in Vite.
+MyDarts is a mobile-friendly darts scorekeeper built with Vue 3 + Vite. It supports count up and zero-one 301 today, with cricket on the roadmap. Use the bundled MVP spec to guide future feature work.
 
-## Recommended IDE Setup
+## Features (current implementation)
+- Count Up mode: 8-round, 3-throw flow with per-throw scoring
+- ZERO ONE 301 mode: 10-round, 3-throw flow with bust handling, single-out finish, and snapshot-based undo that works after game end
+- Snapshot undo history to roll back any throw even after finishing a game
+- Player setup for 1–4 players with quick naming defaults
+- Mobile-first layout with numeric/S/D/T/BULL/MISS inputs
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
-
-## Recommended Browser Setup
-
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd) 
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
-
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
+## Roadmap / Spec
+- The full MVP requirements (Count Up, Zero-One 301, and Cricket) are documented in [`docs/MVP_SPEC.md`](docs/MVP_SPEC.md). Use this as the source of truth for upcoming work.
 
 ## Project Setup
 
