@@ -1,15 +1,26 @@
 <script setup>
 import { computed, reactive, ref } from 'vue'
 
-const MAX_ROUNDS = 8
 const THROWS_PER_ROUND = 3
 const throwTypes = ['S', 'D', 'T']
+const GAME_MODES = {
+  COUNT_UP: 'COUNT_UP',
+  ZERO_ONE_301: 'ZERO_ONE_301'
+}
+const MODE_MAX_ROUNDS = {
+  [GAME_MODES.COUNT_UP]: 8,
+  [GAME_MODES.ZERO_ONE_301]: 10
+}
+const ZERO_ONE_START_SCORE = 301
 
 const playerCount = ref(1)
 const playerNames = reactive(['', '', '', ''])
 const selectedType = ref('S')
+const selectedMode = ref(GAME_MODES.COUNT_UP)
 
 const game = reactive({
+  mode: GAME_MODES.COUNT_UP,
+  maxRounds: MODE_MAX_ROUNDS[GAME_MODES.COUNT_UP],
   players: [],
   currentRoundIndex: 0,
   currentPlayerIndex: 0,
@@ -25,28 +36,36 @@ const hasHistory = computed(() => throwHistory.value.length > 0)
 const isPlaying = computed(() => game.status === 'playing')
 const isFinished = computed(() => game.status === 'finished')
 
-const roundLabel = computed(() => `${game.currentRoundIndex + 1} / ${MAX_ROUNDS}`)
+const roundLabel = computed(() => `${game.currentRoundIndex + 1} / ${game.maxRounds}`)
 
 function createEmptyRound(index) {
   return {
     roundIndex: index + 1,
     throws: [],
-    roundScore: 0
+    roundScore: 0,
+    startRemaining: null
   }
 }
 
 function recalcTotals() {
   game.players.forEach((player) => {
-    player.totalScore = player.rounds.reduce((sum, round) => sum + round.roundScore, 0)
+    if (game.mode === GAME_MODES.COUNT_UP) {
+      player.totalScore = player.rounds.reduce((sum, round) => sum + round.roundScore, 0)
+    } else {
+      player.totalScore = ZERO_ONE_START_SCORE - player.remainingScore
+    }
   })
 }
 
 function initializeGame() {
+  game.mode = selectedMode.value
+  game.maxRounds = MODE_MAX_ROUNDS[game.mode]
   game.players = Array.from({ length: playerCount.value }, (_, index) => ({
     id: `player-${index + 1}`,
     name: playerNames[index]?.trim() || `PLAYER${index + 1}`,
-    rounds: Array.from({ length: MAX_ROUNDS }, (_, roundIndex) => createEmptyRound(roundIndex)),
-    totalScore: 0
+    rounds: Array.from({ length: game.maxRounds }, (_, roundIndex) => createEmptyRound(roundIndex)),
+    totalScore: 0,
+    remainingScore: game.mode === GAME_MODES.ZERO_ONE_301 ? ZERO_ONE_START_SCORE : 0
   }))
   game.currentRoundIndex = 0
   game.currentPlayerIndex = 0
@@ -56,9 +75,11 @@ function initializeGame() {
 }
 
 function resetScores() {
+  game.maxRounds = MODE_MAX_ROUNDS[game.mode]
   game.players.forEach((player) => {
-    player.rounds = Array.from({ length: MAX_ROUNDS }, (_, roundIndex) => createEmptyRound(roundIndex))
+    player.rounds = Array.from({ length: game.maxRounds }, (_, roundIndex) => createEmptyRound(roundIndex))
     player.totalScore = 0
+    player.remainingScore = game.mode === GAME_MODES.ZERO_ONE_301 ? ZERO_ONE_START_SCORE : 0
   })
   game.currentRoundIndex = 0
   game.currentPlayerIndex = 0
@@ -96,15 +117,52 @@ function computeScore(type, number) {
 function recordThrow({ type, number }) {
   if (!isPlaying.value) return
   const player = game.players[game.currentPlayerIndex]
-  const round = player.rounds[game.currentRoundIndex]
+  const round = player?.rounds[game.currentRoundIndex]
 
-  if (round.throws.length >= THROWS_PER_ROUND) return
+  if (!player || !round || round.throws.length >= THROWS_PER_ROUND) return
+
+  pushSnapshot()
+
+  if (game.mode === GAME_MODES.ZERO_ONE_301 && round.startRemaining == null) {
+    round.startRemaining = player.remainingScore
+  }
 
   const score = computeScore(type, number)
+
+  if (game.mode === GAME_MODES.ZERO_ONE_301) {
+    const startRemaining = round.startRemaining ?? player.remainingScore
+    const updatedRoundScore = round.roundScore + score
+    const remainingAfter = startRemaining - updatedRoundScore
+
+    if (remainingAfter < 0) {
+      round.throws = []
+      round.roundScore = 0
+      player.remainingScore = startRemaining
+      recalcTotals()
+      advanceTurn()
+      return
+    }
+
+    round.throws.push({ type, number: number ?? null, score })
+    round.roundScore = updatedRoundScore
+    player.remainingScore = remainingAfter
+    recalcTotals()
+
+    if (remainingAfter === 0) {
+      game.status = 'finished'
+      return
+    }
+
+    if (round.throws.length === THROWS_PER_ROUND) {
+      advanceTurn()
+    }
+
+    return
+  }
+
   round.throws.push({ type, number: number ?? null, score })
   round.roundScore = round.throws.reduce((sum, item) => sum + item.score, 0)
   recalcTotals()
-  throwHistory.value.push({ playerIndex: game.currentPlayerIndex, roundIndex: game.currentRoundIndex })
 
   if (round.throws.length === THROWS_PER_ROUND) {
     advanceTurn()
@@ -112,7 +170,7 @@ function recordThrow({ type, number }) {
 }
 
 function advanceTurn() {
-  if (game.currentRoundIndex === MAX_ROUNDS - 1 && game.currentPlayerIndex === game.players.length - 1) {
+  if (game.currentRoundIndex === game.maxRounds - 1 && game.currentPlayerIndex === game.players.length - 1) {
     game.status = 'finished'
     return
   }
@@ -141,25 +199,26 @@ function handleMiss() {
 }
 
 function undoThrow() {
-  if (!throwHistory.value.length) return
+  if (!hasHistory.value) return
   const last = throwHistory.value.pop()
-  const player = game.players[last.playerIndex]
-  const round = player.rounds[last.roundIndex]
+  if (!last) return
 
-  round.throws.pop()
-  round.roundScore = round.throws.reduce((sum, item) => sum + item.score, 0)
-  recalcTotals()
+  Object.assign(game, last.game)
+  selectedType.value = last.selectedType
+}
 
-  game.currentPlayerIndex = last.playerIndex
-  game.currentRoundIndex = last.roundIndex
-  game.status = 'playing'
+function pushSnapshot() {
+  throwHistory.value.push({
+    game: JSON.parse(JSON.stringify(game)),
+    selectedType: selectedType.value
+  })
 }
 
 const currentRoundDisplayThrows = computed(() => {
   return currentRound.value?.throws ?? []
 })
 
-const isInputDisabled = computed(() => !isPlaying.value || !game.players.length || game.status === 'finished')
+const isInputDisabled = computed(() => game.status !== 'playing' || !game.players.length)
 </script>
 
 <template>
@@ -178,6 +237,21 @@ const isInputDisabled = computed(() => !isPlaying.value || !game.players.length 
 
     <section v-if="game.status === 'setting'" class="panel">
       <h2>プレイヤー設定</h2>
+      <div class="form-row">
+        <label>モード</label>
+        <div class="pill-group">
+          <button
+            v-for="mode in [GAME_MODES.COUNT_UP, GAME_MODES.ZERO_ONE_301]"
+            :key="mode"
+            type="button"
+            :class="['pill', { active: selectedMode === mode }]"
+            @click="selectedMode = mode"
+          >
+            {{ mode === GAME_MODES.COUNT_UP ? 'COUNT UP' : '01 - 301' }}
+          </button>
+        </div>
+      </div>
+
       <div class="form-row">
         <label>人数</label>
         <div class="pill-group">
@@ -218,9 +292,11 @@ const isInputDisabled = computed(() => !isPlaying.value || !game.players.length 
         >
           <div class="player-header">
             <span class="name">{{ player.name }}</span>
-            <span class="score">{{ player.totalScore }}</span>
+            <span class="score">
+              {{ game.mode === GAME_MODES.COUNT_UP ? player.totalScore : player.remainingScore }}
+            </span>
           </div>
-          <div class="progress">Round {{ game.currentRoundIndex + 1 }} / {{ MAX_ROUNDS }}</div>
+          <div class="progress">Round {{ game.currentRoundIndex + 1 }} / {{ game.maxRounds }}</div>
         </div>
       </div>
 
@@ -231,7 +307,7 @@ const isInputDisabled = computed(() => !isPlaying.value || !game.players.length 
             <p class="value">{{ currentPlayer.name }}</p>
           </div>
           <div>
-            <p class="label">ラウンド小計</p>
+            <p class="label">{{ game.mode === GAME_MODES.COUNT_UP ? 'ラウンド小計' : 'このターンの削り' }}</p>
             <p class="value">{{ currentRound?.roundScore ?? 0 }}</p>
           </div>
         </div>
@@ -298,7 +374,9 @@ const isInputDisabled = computed(() => !isPlaying.value || !game.players.length 
       <ul class="result-list">
         <li v-for="player in game.players" :key="player.id" class="result-item">
           <span class="name">{{ player.name }}</span>
-          <span class="score">{{ player.totalScore }}</span>
+          <span class="score">
+            {{ game.mode === GAME_MODES.COUNT_UP ? player.totalScore : player.remainingScore }}
+          </span>
         </li>
       </ul>
       <div class="actions">
