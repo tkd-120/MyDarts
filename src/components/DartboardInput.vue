@@ -19,7 +19,7 @@ const rings = [
   { label: 'T', ratio: 0.57 },
   { label: 'S', ratio: 0.62 },
   { label: 'D', ratio: 0.8 },
-  { label: 'S', ratio: 0.85 }
+  { label: 'S', ratio: 0.9 }
 ]
 
 const ticks = computed(() => {
@@ -37,29 +37,28 @@ const ticks = computed(() => {
   })
 })
 
-function getSectorNumber(x, y, cx, cy) {
-  const dx = x - cx
-  const dy = y - cy
-  let angle = Math.atan2(dy, dx)
-  angle += Math.PI / 2
-  if (angle < 0) angle += Math.PI * 2
-
-  const sectorAngle = (Math.PI * 2) / 20
-  const index = Math.floor(angle / sectorAngle)
-  return sectors[index]
+function decideRingType(ratio) {
+  if (ratio <= 0.06) return 'IB'
+  if (ratio <= 0.12) return 'OB'
+  if (ratio <= 0.52) return 'S'
+  if (ratio <= 0.57) return 'T'
+  if (ratio <= 0.62) return 'S'
+  if (ratio <= 0.8) return 'D'
+  if (ratio <= 0.9) return 'S'
+  return 'MISS'
 }
 
-function getHitType(x, y, cx, cy, R) {
+function getSectorNumber(x, y, cx, cy) {
   const dx = x - cx
-  const dy = y - cy
-  const r = Math.sqrt(dx * dx + dy * dy)
-  const ratio = r / R
+  const dy = cy - y
 
-  for (const ring of rings) {
-    if (ratio <= ring.ratio) return ring.label
-  }
+  let angle = Math.atan2(dy, dx)
+  let cw = Math.PI / 2 - angle
+  if (cw < 0) cw += Math.PI * 2
 
-  return 'MISS'
+  const sectorAngle = (Math.PI * 2) / 20
+  const sectorIndex = Math.floor(cw / sectorAngle)
+  return sectors[sectorIndex]
 }
 
 function handleClick(evt) {
@@ -74,12 +73,15 @@ function handleClick(evt) {
   const cy = rect.height / 2
   const R = Math.min(rect.width, rect.height) / 2
 
-  const hitType = getHitType(x, y, cx, cy, R)
-  let number = null
+  const dx = x - cx
+  const dy = cy - y
+  const r = Math.sqrt(dx * dx + dy * dy)
+  const ratio = r / R
 
-  if (!['OB', 'IB', 'MISS'].includes(hitType)) {
-    number = getSectorNumber(x, y, cx, cy)
-  }
+  const hitType = decideRingType(ratio)
+  const number = ['OB', 'IB', 'MISS'].includes(hitType)
+    ? null
+    : getSectorNumber(x, y, cx, cy)
 
   emit('hit', { type: hitType, number })
 }

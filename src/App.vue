@@ -219,14 +219,17 @@ function recordThrow({ type, number }) {
     if (isValidTarget && marks > 0) {
       const beforeMarks = player.cricketMarks[target]
       const afterMarks = beforeMarks + marks
-      const overflowMarks = Math.max(0, afterMarks - 3)
+      const newOverflow = Math.max(0, afterMarks - 3)
+      const previousOverflow = Math.max(0, beforeMarks - 3)
+      const overflowFromThisThrow = Math.max(0, newOverflow - previousOverflow)
+
       const opponentOpenExists = game.players.some(
         (p) => p.id !== player.id && (p.cricketMarks[target] ?? 0) < 3
       )
 
-      if (overflowMarks > 0 && opponentOpenExists) {
+      if (overflowFromThisThrow > 0 && opponentOpenExists) {
         const baseValue = target === 'BULL' ? 25 : Number(target)
-        scoreGain = baseValue * overflowMarks
+        scoreGain = baseValue * overflowFromThisThrow
       }
 
       player.cricketMarks[target] = afterMarks
