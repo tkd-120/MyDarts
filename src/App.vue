@@ -5,13 +5,20 @@ const THROWS_PER_ROUND = 3
 const throwTypes = ['S', 'D', 'T']
 const GAME_MODES = {
   COUNT_UP: 'COUNT_UP',
-  ZERO_ONE_301: 'ZERO_ONE_301'
+  ZERO_ONE_301: 'ZERO_ONE_301',
+  CRICKET: 'CRICKET'
 }
 const MODE_MAX_ROUNDS = {
   [GAME_MODES.COUNT_UP]: 8,
-  [GAME_MODES.ZERO_ONE_301]: 10
+  [GAME_MODES.ZERO_ONE_301]: 10,
+  [GAME_MODES.CRICKET]: 15
 }
 const ZERO_ONE_START_SCORE = 301
+const CRICKET_NUMBERS = [15, 16, 17, 18, 19, 20, 'BULL']
+const CRICKET_BASE_MARKS = CRICKET_NUMBERS.reduce((acc, key) => {
+  acc[key] = 0
+  return acc
+}, {})
 
 const playerCount = ref(1)
 const playerNames = reactive(['', '', '', ''])
@@ -38,6 +45,26 @@ const isFinished = computed(() => game.status === 'finished')
 
 const roundLabel = computed(() => `${game.currentRoundIndex + 1} / ${game.maxRounds}`)
 
+const roundScoreLabel = computed(() => {
+  if (game.mode === GAME_MODES.ZERO_ONE_301) return 'このターンの削り'
+  if (game.mode === GAME_MODES.CRICKET) return 'このターンの得点'
+  return 'ラウンド小計'
+})
+
+function displayScore(player) {
+  if (game.mode === GAME_MODES.ZERO_ONE_301) return player.remainingScore
+  if (game.mode === GAME_MODES.CRICKET) return player.cricketScore
+  return player.totalScore
+}
+
+function scoreSuffix() {
+  if (game.mode === GAME_MODES.ZERO_ONE_301) return '残り'
+  if (game.mode === GAME_MODES.CRICKET) return '得点'
+  return '合計'
+}
+
+const currentPlayerMarks = computed(() => currentPlayer.value?.cricketMarks ?? {})
+
 function createEmptyRound(index) {
   return {
     roundIndex: index + 1,
@@ -51,8 +78,10 @@ function recalcTotals() {
   game.players.forEach((player) => {
     if (game.mode === GAME_MODES.COUNT_UP) {
       player.totalScore = player.rounds.reduce((sum, round) => sum + round.roundScore, 0)
-    } else {
+    } else if (game.mode === GAME_MODES.ZERO_ONE_301) {
       player.totalScore = ZERO_ONE_START_SCORE - player.remainingScore
+    } else {
+      player.totalScore = player.cricketScore
     }
   })
 }
@@ -65,7 +94,9 @@ function initializeGame() {
     name: playerNames[index]?.trim() || `PLAYER${index + 1}`,
     rounds: Array.from({ length: game.maxRounds }, (_, roundIndex) => createEmptyRound(roundIndex)),
     totalScore: 0,
-    remainingScore: game.mode === GAME_MODES.ZERO_ONE_301 ? ZERO_ONE_START_SCORE : 0
+    remainingScore: game.mode === GAME_MODES.ZERO_ONE_301 ? ZERO_ONE_START_SCORE : 0,
+    cricketScore: 0,
+    cricketMarks: JSON.parse(JSON.stringify(CRICKET_BASE_MARKS))
   }))
   game.currentRoundIndex = 0
   game.currentPlayerIndex = 0
@@ -80,6 +111,8 @@ function resetScores() {
     player.rounds = Array.from({ length: game.maxRounds }, (_, roundIndex) => createEmptyRound(roundIndex))
     player.totalScore = 0
     player.remainingScore = game.mode === GAME_MODES.ZERO_ONE_301 ? ZERO_ONE_START_SCORE : 0
+    player.cricketScore = 0
+    player.cricketMarks = JSON.parse(JSON.stringify(CRICKET_BASE_MARKS))
   })
   game.currentRoundIndex = 0
   game.currentPlayerIndex = 0
@@ -112,6 +145,19 @@ function computeScore(type, number) {
   if (type === 'D') return number * 2
   if (type === 'T') return number * 3
   return number
+}
+
+function computeCricketMarks(type) {
+  if (type === 'MISS') return 0
+  if (type === 'OB') return 1
+  if (type === 'IB') return 2
+  if (type === 'T') return 3
+  if (type === 'D') return 2
+  return 1
+}
+
+function isCricketTarget(numberOrBull) {
+  return CRICKET_NUMBERS.includes(numberOrBull)
 }
 
 function recordThrow({ type, number }) {
@@ -149,6 +195,50 @@ function recordThrow({ type, number }) {
     recalcTotals()
 
     if (remainingAfter === 0) {
+      game.status = 'finished'
+      return
+    }
+
+    if (round.throws.length === THROWS_PER_ROUND) {
+      advanceTurn()
+    }
+
+    return
+  }
+
+  if (game.mode === GAME_MODES.CRICKET) {
+    const target = type === 'OB' || type === 'IB' ? 'BULL' : number
+    const marks = computeCricketMarks(type)
+    const isValidTarget = isCricketTarget(target)
+    let scoreGain = 0
+
+    if (isValidTarget && marks > 0) {
+      const beforeMarks = player.cricketMarks[target]
+      const afterMarks = beforeMarks + marks
+      const overflowMarks = Math.max(0, afterMarks - 3)
+      const opponentOpenExists = game.players.some(
+        (p) => p.id !== player.id && (p.cricketMarks[target] ?? 0) < 3
+      )
+
+      if (overflowMarks > 0 && opponentOpenExists) {
+        const baseValue = target === 'BULL' ? 25 : Number(target)
+        scoreGain = baseValue * overflowMarks
+      }
+
+      player.cricketMarks[target] = afterMarks
+      player.cricketScore += scoreGain
+    }
+
+    round.throws.push({ type, number: number ?? null, score: scoreGain })
+    round.roundScore += scoreGain
+    recalcTotals()
+
+    const allClosed = CRICKET_NUMBERS.every((num) => (player.cricketMarks[num] ?? 0) >= 3)
+    const leading = game.players.every(
+      (p) => p.id === player.id || player.cricketScore >= (p.cricketScore ?? 0)
+    )
+
+    if (allClosed && leading) {
       game.status = 'finished'
       return
     }
@@ -219,6 +309,29 @@ const currentRoundDisplayThrows = computed(() => {
 })
 
 const isInputDisabled = computed(() => game.status !== 'playing' || !game.players.length)
+
+const resultPlayers = computed(() => {
+  if (!isFinished.value) return []
+  const players = [...game.players]
+
+  if (game.mode === GAME_MODES.COUNT_UP) {
+    return players.sort((a, b) => b.totalScore - a.totalScore)
+  }
+
+  if (game.mode === GAME_MODES.ZERO_ONE_301) {
+    return players.sort((a, b) => a.remainingScore - b.remainingScore)
+  }
+
+  const closedPlayers = players.filter((player) =>
+    CRICKET_NUMBERS.every((num) => (player.cricketMarks?.[num] ?? 0) >= 3)
+  )
+
+  if (closedPlayers.length) {
+    return closedPlayers.sort((a, b) => b.cricketScore - a.cricketScore)
+  }
+
+  return players.sort((a, b) => b.cricketScore - a.cricketScore)
+})
 </script>
 
 <template>
@@ -227,7 +340,7 @@ const isInputDisabled = computed(() => game.status !== 'playing' || !game.player
       <div>
         <p class="version">v0.1</p>
         <h1>MyDarts</h1>
-        <p class="subtitle">カウントアップ専用スコア計算</p>
+        <p class="subtitle">カウントアップ / 01 / クリケット対応スコア計算</p>
       </div>
       <div v-if="isPlaying" class="round-info">
         <p class="label">Round</p>
@@ -241,13 +354,19 @@ const isInputDisabled = computed(() => game.status !== 'playing' || !game.player
         <label>モード</label>
         <div class="pill-group">
           <button
-            v-for="mode in [GAME_MODES.COUNT_UP, GAME_MODES.ZERO_ONE_301]"
+            v-for="mode in [GAME_MODES.COUNT_UP, GAME_MODES.ZERO_ONE_301, GAME_MODES.CRICKET]"
             :key="mode"
             type="button"
             :class="['pill', { active: selectedMode === mode }]"
             @click="selectedMode = mode"
           >
-            {{ mode === GAME_MODES.COUNT_UP ? 'COUNT UP' : '01 - 301' }}
+            {{
+              mode === GAME_MODES.COUNT_UP
+                ? 'COUNT UP'
+                : mode === GAME_MODES.ZERO_ONE_301
+                  ? '01 - 301'
+                  : 'CRICKET'
+            }}
           </button>
         </div>
       </div>
@@ -293,7 +412,7 @@ const isInputDisabled = computed(() => game.status !== 'playing' || !game.player
           <div class="player-header">
             <span class="name">{{ player.name }}</span>
             <span class="score">
-              {{ game.mode === GAME_MODES.COUNT_UP ? player.totalScore : player.remainingScore }}
+              {{ scoreSuffix() }}: {{ displayScore(player) }}
             </span>
           </div>
           <div class="progress">Round {{ game.currentRoundIndex + 1 }} / {{ game.maxRounds }}</div>
@@ -307,7 +426,7 @@ const isInputDisabled = computed(() => game.status !== 'playing' || !game.player
             <p class="value">{{ currentPlayer.name }}</p>
           </div>
           <div>
-            <p class="label">{{ game.mode === GAME_MODES.COUNT_UP ? 'ラウンド小計' : 'このターンの削り' }}</p>
+            <p class="label">{{ roundScoreLabel }}</p>
             <p class="value">{{ currentRound?.roundScore ?? 0 }}</p>
           </div>
         </div>
@@ -324,6 +443,12 @@ const isInputDisabled = computed(() => game.status !== 'playing' || !game.player
               </template>
               <template v-else>-</template>
             </p>
+          </div>
+        </div>
+        <div v-if="game.mode === GAME_MODES.CRICKET" class="cricket-grid">
+          <div v-for="target in CRICKET_NUMBERS" :key="target" class="cricket-cell">
+            <p class="label">{{ target === 'BULL' ? 'BULL' : target }}</p>
+            <p class="value">{{ currentPlayerMarks[target] ?? 0 }} マーク</p>
           </div>
         </div>
       </div>
@@ -372,11 +497,9 @@ const isInputDisabled = computed(() => game.status !== 'playing' || !game.player
     <section v-else-if="isFinished" class="panel">
       <h2>結果</h2>
       <ul class="result-list">
-        <li v-for="player in game.players" :key="player.id" class="result-item">
+        <li v-for="player in resultPlayers" :key="player.id" class="result-item">
           <span class="name">{{ player.name }}</span>
-          <span class="score">
-            {{ game.mode === GAME_MODES.COUNT_UP ? player.totalScore : player.remainingScore }}
-          </span>
+          <span class="score">{{ scoreSuffix() }}: {{ displayScore(player) }}</span>
         </li>
       </ul>
       <div class="actions">
@@ -587,6 +710,30 @@ h1 {
 }
 
 .throw-card .value {
+  font-weight: 700;
+  color: #111827;
+}
+
+.cricket-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 8px;
+}
+
+.cricket-cell {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 8px;
+  background: #f3f4f6;
+}
+
+.cricket-cell .label {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.cricket-cell .value {
   font-weight: 700;
   color: #111827;
 }
