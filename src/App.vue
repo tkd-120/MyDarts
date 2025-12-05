@@ -302,6 +302,7 @@ const isInputDisabled = computed(() => !isPlaying.value || !game.players.length 
         </li>
       </ul>
       <div class="actions">
+        <button class="ghost" type="button" :disabled="!hasHistory" @click="undoThrow">UNDO</button>
         <button class="primary" type="button" @click="resetScores">もう一度プレイ</button>
         <button class="ghost" type="button" @click="newGame">新しいゲーム</button>
       </div>
