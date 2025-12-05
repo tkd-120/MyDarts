@@ -1,5 +1,6 @@
 <script setup>
 import { computed, reactive, ref } from 'vue'
+import DartboardInput from './components/DartboardInput.vue'
 
 const THROWS_PER_ROUND = 3
 const throwTypes = ['S', 'D', 'T']
@@ -24,6 +25,7 @@ const playerCount = ref(1)
 const playerNames = reactive(['', '', '', ''])
 const selectedType = ref('S')
 const selectedMode = ref(GAME_MODES.COUNT_UP)
+const useDartboardInput = ref(true)
 
 const game = reactive({
   mode: GAME_MODES.COUNT_UP,
@@ -102,6 +104,7 @@ function initializeGame() {
   game.currentPlayerIndex = 0
   game.status = 'playing'
   selectedType.value = 'S'
+  useDartboardInput.value = true
   throwHistory.value = []
 }
 
@@ -118,6 +121,7 @@ function resetScores() {
   game.currentPlayerIndex = 0
   game.status = 'playing'
   selectedType.value = 'S'
+  useDartboardInput.value = true
   throwHistory.value = []
 }
 
@@ -454,43 +458,72 @@ const resultPlayers = computed(() => {
       </div>
 
       <div class="controls">
-        <div class="control-row">
-          <p class="label">種別</p>
-          <div class="pill-group">
-            <button
-              v-for="type in throwTypes"
-              :key="type"
-              type="button"
-              :class="['pill', { active: selectedType === type }]"
-              :disabled="isInputDisabled"
-              @click="selectedType = type"
-            >
-              {{ type }}
-            </button>
+        <div class="control-row control-head">
+          <div>
+            <p class="label">入力方式</p>
+            <div class="pill-group">
+              <button
+                type="button"
+                :class="['pill', { active: !useDartboardInput } ]"
+                @click="useDartboardInput = false"
+              >
+                ボタン
+              </button>
+              <button
+                type="button"
+                :class="['pill', { active: useDartboardInput } ]"
+                @click="useDartboardInput = true"
+              >
+                ダーツ盤
+              </button>
+            </div>
           </div>
           <button class="ghost" type="button" :disabled="!hasHistory" @click="undoThrow">UNDO</button>
         </div>
 
-        <div class="control-row">
-          <div class="pill-group fill">
-            <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handleBull('OB')">OB</button>
-            <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handleBull('IB')">IB</button>
-            <button type="button" class="pill danger" :disabled="isInputDisabled" @click="handleMiss">MISS</button>
-          </div>
+        <div v-if="useDartboardInput" class="dartboard-block">
+          <DartboardInput :disabled="isInputDisabled" @hit="recordThrow" />
+          <p class="helper-text">ダーツ盤をタップして入力。外側タップで MISS。</p>
         </div>
 
-        <div class="numbers-grid">
-          <button
-            v-for="number in 20"
-            :key="number"
-            type="button"
-            class="number-btn"
-            :disabled="isInputDisabled"
-            @click="handleNumberClick(number)"
-          >
-            {{ number }}
-          </button>
-        </div>
+        <template v-else>
+          <div class="control-row">
+            <p class="label">種別</p>
+            <div class="pill-group">
+              <button
+                v-for="type in throwTypes"
+                :key="type"
+                type="button"
+                :class="['pill', { active: selectedType === type }]"
+                :disabled="isInputDisabled"
+                @click="selectedType = type"
+              >
+                {{ type }}
+              </button>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <div class="pill-group fill">
+              <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handleBull('OB')">OB</button>
+              <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handleBull('IB')">IB</button>
+              <button type="button" class="pill danger" :disabled="isInputDisabled" @click="handleMiss">MISS</button>
+            </div>
+          </div>
+
+          <div class="numbers-grid">
+            <button
+              v-for="number in 20"
+              :key="number"
+              type="button"
+              class="number-btn"
+              :disabled="isInputDisabled"
+              @click="handleNumberClick(number)"
+            >
+              {{ number }}
+            </button>
+          </div>
+        </template>
       </div>
     </section>
 
@@ -743,6 +776,29 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.control-head {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.control-head .pill-group {
+  flex-wrap: wrap;
+}
+
+.dartboard-block {
+  background: #0f172a;
+  border-radius: 14px;
+  padding: 12px;
+  border: 1px solid #1f2937;
+}
+
+.helper-text {
+  margin-top: 8px;
+  color: #e5e7eb;
+  font-size: 13px;
+  text-align: center;
 }
 
 .control-row {
