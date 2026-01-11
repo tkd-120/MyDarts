@@ -247,7 +247,7 @@ function recordPracticeHit({ type, number }) {
   const afterMarks = Math.min(PRACTICE_MAX_MARKS, beforeMarks + markGain)
 
   game.practiceMarks[target] = afterMarks
-  game.practiceThrows.push({ target, type: normalizedType })
+  game.practiceThrows.push({ target, type: normalizedType, marks: markGain })
 
   if (beforeMarks < PRACTICE_MAX_MARKS && afterMarks >= PRACTICE_MAX_MARKS) {
     if (game.practiceCurrentTargetIndex < PRACTICE_TARGETS.length - 1) {
@@ -489,6 +489,18 @@ const practiceTargetStats = computed(() => {
 
   return stats
 })
+
+const practiceRounds = computed(() => {
+  if (!game.practiceThrows?.length) return []
+  const rounds = []
+  for (let index = 0; index < game.practiceThrows.length; index += THROWS_PER_ROUND) {
+    const slice = game.practiceThrows.slice(index, index + THROWS_PER_ROUND)
+    rounds.push(slice.reduce((sum, entry) => sum + (entry.marks ?? 0), 0))
+  }
+  return rounds
+})
+
+const practiceRoundsDisplay = computed(() => practiceRounds.value.join(', '))
 </script>
 
 <template>
@@ -593,6 +605,10 @@ const practiceTargetStats = computed(() => {
             <p class="label">{{ target === 'BULL' ? 'BULL' : target }}</p>
             <p class="value">{{ game.practiceMarks[target] ?? 0 }} / {{ PRACTICE_MAX_MARKS }}</p>
           </div>
+        </div>
+        <div class="practice-rounds">
+          <p class="label">ラウンドごとのマーク数 (3投)</p>
+          <p class="value">{{ practiceRoundsDisplay || '-' }}</p>
         </div>
       </template>
       <template v-else>
@@ -788,6 +804,10 @@ const practiceTargetStats = computed(() => {
               </template>
             </div>
           </div>
+        </div>
+        <div class="practice-rounds results">
+          <p class="label">ラウンドごとのマーク数 (3投)</p>
+          <p class="value">{{ practiceRoundsDisplay || '-' }}</p>
         </div>
       </template>
       <ul v-else class="result-list">
@@ -1079,6 +1099,31 @@ h1 {
 .practice-cell .value {
   font-weight: 700;
   color: #111827;
+}
+
+.practice-rounds {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed #d1d5db;
+  border-radius: 12px;
+  background: #f9fafb;
+}
+
+.practice-rounds.results {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.practice-rounds .label {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 6px;
+}
+
+.practice-rounds .value {
+  font-weight: 700;
+  color: #111827;
+  word-break: break-word;
 }
 
 .controls {
