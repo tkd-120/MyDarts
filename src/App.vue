@@ -7,16 +7,24 @@ const throwTypes = ['S', 'D', 'T']
 const GAME_MODES = {
   COUNT_UP: 'COUNT_UP',
   ZERO_ONE_301: 'ZERO_ONE_301',
-  CRICKET: 'CRICKET'
+  CRICKET: 'CRICKET',
+  CRICKET_PRACTICE: 'CRICKET_PRACTICE'
 }
 const MODE_MAX_ROUNDS = {
   [GAME_MODES.COUNT_UP]: 8,
   [GAME_MODES.ZERO_ONE_301]: 10,
-  [GAME_MODES.CRICKET]: 15
+  [GAME_MODES.CRICKET]: 15,
+  [GAME_MODES.CRICKET_PRACTICE]: 1
 }
 const ZERO_ONE_START_SCORE = 301
 const CRICKET_NUMBERS = [15, 16, 17, 18, 19, 20, 'BULL']
 const CRICKET_BASE_MARKS = CRICKET_NUMBERS.reduce((acc, key) => {
+  acc[key] = 0
+  return acc
+}, {})
+const PRACTICE_TARGETS = [20, 19, 18, 17, 16, 15, 'BULL']
+const PRACTICE_MAX_MARKS = 10
+const PRACTICE_BASE_MARKS = PRACTICE_TARGETS.reduce((acc, key) => {
   acc[key] = 0
   return acc
 }, {})
@@ -33,7 +41,12 @@ const game = reactive({
   players: [],
   currentRoundIndex: 0,
   currentPlayerIndex: 0,
-  status: 'setting'
+  status: 'setting',
+  practiceCurrentTargetIndex: 0,
+  practiceMarks: JSON.parse(JSON.stringify(PRACTICE_BASE_MARKS)),
+  practiceThrows: [],
+  practiceStartedAt: null,
+  practiceEndedAt: null
 })
 
 const throwHistory = ref([])
@@ -44,6 +57,7 @@ const currentRound = computed(() => currentPlayer.value?.rounds[game.currentRoun
 const hasHistory = computed(() => throwHistory.value.length > 0)
 const isPlaying = computed(() => game.status === 'playing')
 const isFinished = computed(() => game.status === 'finished')
+const isPracticeMode = computed(() => game.mode === GAME_MODES.CRICKET_PRACTICE)
 
 const roundLabel = computed(() => `${game.currentRoundIndex + 1} / ${game.maxRounds}`)
 
@@ -66,6 +80,13 @@ function scoreSuffix() {
 }
 
 const currentPlayerMarks = computed(() => currentPlayer.value?.cricketMarks ?? {})
+const practiceTarget = computed(() => PRACTICE_TARGETS[game.practiceCurrentTargetIndex])
+const practiceTargetLabel = computed(() => (practiceTarget.value === 'BULL' ? 'BULL' : practiceTarget.value))
+const practiceProgress = computed(() => {
+  const marks = game.practiceMarks?.[practiceTarget.value] ?? 0
+  return `${marks} / ${PRACTICE_MAX_MARKS}`
+})
+const practiceThrowCount = computed(() => game.practiceThrows?.length ?? 0)
 
 function createEmptyRound(index) {
   return {
@@ -88,6 +109,14 @@ function recalcTotals() {
   })
 }
 
+function resetPracticeState() {
+  game.practiceCurrentTargetIndex = 0
+  game.practiceMarks = JSON.parse(JSON.stringify(PRACTICE_BASE_MARKS))
+  game.practiceThrows = []
+  game.practiceStartedAt = Date.now()
+  game.practiceEndedAt = null
+}
+
 function initializeGame() {
   game.mode = selectedMode.value
   game.maxRounds = MODE_MAX_ROUNDS[game.mode]
@@ -106,6 +135,9 @@ function initializeGame() {
   selectedType.value = 'S'
   useDartboardInput.value = true
   throwHistory.value = []
+  if (game.mode === GAME_MODES.CRICKET_PRACTICE) {
+    resetPracticeState()
+  }
 }
 
 function resetScores() {
@@ -123,10 +155,16 @@ function resetScores() {
   selectedType.value = 'S'
   useDartboardInput.value = true
   throwHistory.value = []
+  if (game.mode === GAME_MODES.CRICKET_PRACTICE) {
+    resetPracticeState()
+  }
 }
 
 function startGame() {
   if (playerCount.value < 1 || playerCount.value > 4) return
+  if (selectedMode.value === GAME_MODES.CRICKET_PRACTICE) {
+    playerCount.value = 1
+  }
   initializeGame()
 }
 
@@ -139,6 +177,13 @@ function newGame() {
   game.currentPlayerIndex = 0
   throwHistory.value = []
   selectedType.value = 'S'
+}
+
+function selectMode(mode) {
+  selectedMode.value = mode
+  if (mode === GAME_MODES.CRICKET_PRACTICE) {
+    playerCount.value = 1
+  }
 }
 
 function computeScore(type, number) {
@@ -164,7 +209,62 @@ function isCricketTarget(numberOrBull) {
   return CRICKET_NUMBERS.includes(numberOrBull)
 }
 
+function computePracticeMarks(type, isBull) {
+  if (type === 'MISS') return 0
+  if (isBull) {
+    if (type === 'OB') return 1
+    if (type === 'IB') return 2
+    return 0
+  }
+  if (type === 'T') return 3
+  if (type === 'D') return 2
+  if (type === 'S') return 1
+  return 0
+}
+
+function recordPracticeHit({ type, number }) {
+  if (!isPlaying.value) return
+
+  pushSnapshot()
+
+  const target = PRACTICE_TARGETS[game.practiceCurrentTargetIndex]
+  const isBull = target === 'BULL'
+  let normalizedType = type
+  let isValid = false
+
+  if (isBull) {
+    isValid = ['OB', 'IB'].includes(type)
+  } else {
+    isValid = ['S', 'D', 'T'].includes(type) && number === target
+  }
+
+  if (!isValid) {
+    normalizedType = 'MISS'
+  }
+
+  const markGain = computePracticeMarks(normalizedType, isBull)
+  const beforeMarks = game.practiceMarks[target] ?? 0
+  const afterMarks = Math.min(PRACTICE_MAX_MARKS, beforeMarks + markGain)
+
+  game.practiceMarks[target] = afterMarks
+  game.practiceThrows.push({ target, type: normalizedType })
+
+  if (beforeMarks < PRACTICE_MAX_MARKS && afterMarks >= PRACTICE_MAX_MARKS) {
+    if (game.practiceCurrentTargetIndex < PRACTICE_TARGETS.length - 1) {
+      game.practiceCurrentTargetIndex += 1
+    } else {
+      game.practiceEndedAt = Date.now()
+      game.status = 'finished'
+    }
+  }
+}
+
 function recordThrow({ type, number }) {
+  if (game.mode === GAME_MODES.CRICKET_PRACTICE) {
+    recordPracticeHit({ type, number })
+    return
+  }
+
   if (!isPlaying.value) return
   const player = game.players[game.currentPlayerIndex]
   const round = player?.rounds[game.currentRoundIndex]
@@ -295,6 +395,20 @@ function handleMiss() {
   recordThrow({ type: 'MISS', number: null })
 }
 
+function handlePracticeThrow(type) {
+  const target = PRACTICE_TARGETS[game.practiceCurrentTargetIndex]
+  const number = target === 'BULL' ? null : target
+  recordPracticeHit({ type, number })
+}
+
+function resetPracticeSession() {
+  const shouldReset = window.confirm('練習セッションを最初からやり直しますか？')
+  if (!shouldReset) return
+  resetPracticeState()
+  game.status = 'playing'
+  throwHistory.value = []
+}
+
 function undoThrow() {
   if (!hasHistory.value) return
   const last = throwHistory.value.pop()
@@ -339,6 +453,42 @@ const resultPlayers = computed(() => {
 
   return players.sort((a, b) => b.cricketScore - a.cricketScore)
 })
+
+function formatDuration(ms) {
+  if (!ms || ms < 0) return '0:00'
+  const totalSeconds = Math.floor(ms / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = String(totalSeconds % 60).padStart(2, '0')
+  return `${minutes}:${seconds}`
+}
+
+const practiceElapsed = computed(() => {
+  const start = game.practiceStartedAt
+  if (!start) return '0:00'
+  const end = game.practiceEndedAt ?? Date.now()
+  return formatDuration(end - start)
+})
+
+const practiceTargetStats = computed(() => {
+  const stats = PRACTICE_TARGETS.reduce((acc, target) => {
+    acc[target] = {
+      S: 0,
+      D: 0,
+      T: 0,
+      OB: 0,
+      IB: 0,
+      MISS: 0
+    }
+    return acc
+  }, {})
+
+  game.practiceThrows.forEach((entry) => {
+    if (!stats[entry.target]) return
+    stats[entry.target][entry.type] = (stats[entry.target][entry.type] ?? 0) + 1
+  })
+
+  return stats
+})
 </script>
 
 <template>
@@ -349,7 +499,7 @@ const resultPlayers = computed(() => {
         <h1>MyDarts</h1>
         <p class="subtitle">カウントアップ / 01 / クリケット対応スコア計算</p>
       </div>
-      <div v-if="isPlaying" class="round-info">
+      <div v-if="isPlaying && !isPracticeMode" class="round-info">
         <p class="label">Round</p>
         <p class="value">{{ roundLabel }}</p>
       </div>
@@ -361,18 +511,25 @@ const resultPlayers = computed(() => {
         <label>モード</label>
         <div class="pill-group">
           <button
-            v-for="mode in [GAME_MODES.COUNT_UP, GAME_MODES.ZERO_ONE_301, GAME_MODES.CRICKET]"
+            v-for="mode in [
+              GAME_MODES.COUNT_UP,
+              GAME_MODES.ZERO_ONE_301,
+              GAME_MODES.CRICKET,
+              GAME_MODES.CRICKET_PRACTICE
+            ]"
             :key="mode"
             type="button"
             :class="['pill', { active: selectedMode === mode }]"
-            @click="selectedMode = mode"
+            @click="selectMode(mode)"
           >
             {{
               mode === GAME_MODES.COUNT_UP
                 ? 'COUNT UP'
                 : mode === GAME_MODES.ZERO_ONE_301
                   ? '01 - 301'
-                  : 'CRICKET'
+                  : mode === GAME_MODES.CRICKET
+                    ? 'CRICKET'
+                    : 'CRICKET 10 MARKS'
             }}
           </button>
         </div>
@@ -386,6 +543,7 @@ const resultPlayers = computed(() => {
             :key="count"
             type="button"
             :class="['pill', { active: playerCount === count }]"
+            :disabled="selectedMode === GAME_MODES.CRICKET_PRACTICE && count !== 1"
             @click="playerCount = count"
           >
             {{ count }}人
@@ -395,7 +553,12 @@ const resultPlayers = computed(() => {
       <div class="form-row">
         <label>プレイヤー名</label>
         <div class="player-inputs">
-          <div v-for="(name, index) in playerNames" :key="index" class="input-row" :class="{ muted: index >= playerCount }">
+          <div
+            v-for="(name, index) in playerNames"
+            :key="index"
+            class="input-row"
+            :class="{ muted: index >= playerCount }"
+          >
             <span class="input-label">P{{ index + 1 }}</span>
             <input
               v-model="playerNames[index]"
@@ -410,129 +573,224 @@ const resultPlayers = computed(() => {
     </section>
 
     <section v-else-if="isPlaying" class="panel">
-      <div class="scoreboard">
-        <div
-          v-for="(player, index) in game.players"
-          :key="player.id"
-          :class="['player-card', { active: index === game.currentPlayerIndex } ]"
-        >
-          <div class="player-header">
-            <span class="name">{{ player.name }}</span>
-            <span class="score">
-              {{ scoreSuffix() }}: {{ displayScore(player) }}
-            </span>
+      <template v-if="game.mode === GAME_MODES.CRICKET_PRACTICE">
+        <div class="practice-status">
+          <div class="practice-card">
+            <p class="label">現在の的</p>
+            <p class="value">{{ practiceTargetLabel }}</p>
           </div>
-          <div class="progress">Round {{ game.currentRoundIndex + 1 }} / {{ game.maxRounds }}</div>
-        </div>
-      </div>
-
-      <div class="round-detail" v-if="currentPlayer">
-        <div class="section-header">
-          <div>
-            <p class="label">手番</p>
-            <p class="value">{{ currentPlayer.name }}</p>
+          <div class="practice-card">
+            <p class="label">進捗</p>
+            <p class="value">{{ practiceProgress }}</p>
           </div>
-          <div>
-            <p class="label">{{ roundScoreLabel }}</p>
-            <p class="value">{{ currentRound?.roundScore ?? 0 }}</p>
+          <div class="practice-card">
+            <p class="label">投数</p>
+            <p class="value">{{ practiceThrowCount }}</p>
           </div>
         </div>
-        <div class="throws">
-          <div v-for="slot in THROWS_PER_ROUND" :key="slot" class="throw-card">
-            <p class="label">{{ slot }}投目</p>
-            <p class="value">
-              <template v-if="currentRoundDisplayThrows[slot - 1]">
-                {{ currentRoundDisplayThrows[slot - 1].type }}
-                <span v-if="currentRoundDisplayThrows[slot - 1].number">
-                  {{ currentRoundDisplayThrows[slot - 1].number }}
-                </span>
-                = {{ currentRoundDisplayThrows[slot - 1].score }}
-              </template>
-              <template v-else>-</template>
-            </p>
-          </div>
-        </div>
-        <div v-if="game.mode === GAME_MODES.CRICKET" class="cricket-grid">
-          <div v-for="target in CRICKET_NUMBERS" :key="target" class="cricket-cell">
+        <div class="practice-grid">
+          <div v-for="target in PRACTICE_TARGETS" :key="target" class="practice-cell">
             <p class="label">{{ target === 'BULL' ? 'BULL' : target }}</p>
-            <p class="value">{{ currentPlayerMarks[target] ?? 0 }} マーク</p>
+            <p class="value">{{ game.practiceMarks[target] ?? 0 }} / {{ PRACTICE_MAX_MARKS }}</p>
           </div>
         </div>
-      </div>
+      </template>
+      <template v-else>
+        <div class="scoreboard">
+          <div
+            v-for="(player, index) in game.players"
+            :key="player.id"
+            :class="['player-card', { active: index === game.currentPlayerIndex } ]"
+          >
+            <div class="player-header">
+              <span class="name">{{ player.name }}</span>
+              <span class="score">
+                {{ scoreSuffix() }}: {{ displayScore(player) }}
+              </span>
+            </div>
+            <div class="progress">Round {{ game.currentRoundIndex + 1 }} / {{ game.maxRounds }}</div>
+          </div>
+        </div>
+
+        <div class="round-detail" v-if="currentPlayer">
+          <div class="section-header">
+            <div>
+              <p class="label">手番</p>
+              <p class="value">{{ currentPlayer.name }}</p>
+            </div>
+            <div>
+              <p class="label">{{ roundScoreLabel }}</p>
+              <p class="value">{{ currentRound?.roundScore ?? 0 }}</p>
+            </div>
+          </div>
+          <div class="throws">
+            <div v-for="slot in THROWS_PER_ROUND" :key="slot" class="throw-card">
+              <p class="label">{{ slot }}投目</p>
+              <p class="value">
+                <template v-if="currentRoundDisplayThrows[slot - 1]">
+                  {{ currentRoundDisplayThrows[slot - 1].type }}
+                  <span v-if="currentRoundDisplayThrows[slot - 1].number">
+                    {{ currentRoundDisplayThrows[slot - 1].number }}
+                  </span>
+                  = {{ currentRoundDisplayThrows[slot - 1].score }}
+                </template>
+                <template v-else>-</template>
+              </p>
+            </div>
+          </div>
+          <div v-if="game.mode === GAME_MODES.CRICKET" class="cricket-grid">
+            <div v-for="target in CRICKET_NUMBERS" :key="target" class="cricket-cell">
+              <p class="label">{{ target === 'BULL' ? 'BULL' : target }}</p>
+              <p class="value">{{ currentPlayerMarks[target] ?? 0 }} マーク</p>
+            </div>
+          </div>
+        </div>
+      </template>
 
       <div class="controls">
-        <div class="control-row control-head">
-          <div>
-            <p class="label">入力方式</p>
-            <div class="pill-group">
-              <button
-                type="button"
-                :class="['pill', { active: !useDartboardInput } ]"
-                @click="useDartboardInput = false"
-              >
-                ボタン
-              </button>
-              <button
-                type="button"
-                :class="['pill', { active: useDartboardInput } ]"
-                @click="useDartboardInput = true"
-              >
-                ダーツ盤
-              </button>
+        <template v-if="game.mode === GAME_MODES.CRICKET_PRACTICE">
+          <div class="control-row control-head">
+            <div>
+              <p class="label">入力</p>
+              <p class="value small">現在の的だけ有効</p>
+            </div>
+            <div class="button-row">
+              <button class="ghost" type="button" :disabled="!hasHistory" @click="undoThrow">UNDO</button>
+              <button class="ghost" type="button" @click="resetPracticeSession">RESET</button>
             </div>
           </div>
-          <button class="ghost" type="button" :disabled="!hasHistory" @click="undoThrow">UNDO</button>
-        </div>
-
-        <div v-if="useDartboardInput" class="dartboard-block">
-          <DartboardInput :disabled="isInputDisabled" @hit="recordThrow" />
-          <p class="helper-text">ダーツ盤をタップして入力。外側タップで MISS。</p>
-        </div>
-
+          <div class="practice-input">
+            <template v-if="practiceTarget === 'BULL'">
+              <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handlePracticeThrow('OB')">
+                OUTER
+              </button>
+              <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handlePracticeThrow('IB')">
+                INNER
+              </button>
+              <button type="button" class="pill danger" :disabled="isInputDisabled" @click="handlePracticeThrow('MISS')">
+                MISS
+              </button>
+            </template>
+            <template v-else>
+              <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handlePracticeThrow('S')">
+                S
+              </button>
+              <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handlePracticeThrow('D')">
+                D
+              </button>
+              <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handlePracticeThrow('T')">
+                T
+              </button>
+              <button type="button" class="pill danger" :disabled="isInputDisabled" @click="handlePracticeThrow('MISS')">
+                MISS
+              </button>
+            </template>
+          </div>
+        </template>
         <template v-else>
-          <div class="control-row">
-            <p class="label">種別</p>
-            <div class="pill-group">
+          <div class="control-row control-head">
+            <div>
+              <p class="label">入力方式</p>
+              <div class="pill-group">
+                <button
+                  type="button"
+                  :class="['pill', { active: !useDartboardInput } ]"
+                  @click="useDartboardInput = false"
+                >
+                  ボタン
+                </button>
+                <button
+                  type="button"
+                  :class="['pill', { active: useDartboardInput } ]"
+                  @click="useDartboardInput = true"
+                >
+                  ダーツ盤
+                </button>
+              </div>
+            </div>
+            <button class="ghost" type="button" :disabled="!hasHistory" @click="undoThrow">UNDO</button>
+          </div>
+
+          <div v-if="useDartboardInput" class="dartboard-block">
+            <DartboardInput :disabled="isInputDisabled" @hit="recordThrow" />
+            <p class="helper-text">ダーツ盤をタップして入力。外側タップで MISS。</p>
+          </div>
+
+          <template v-else>
+            <div class="control-row">
+              <p class="label">種別</p>
+              <div class="pill-group">
+                <button
+                  v-for="type in throwTypes"
+                  :key="type"
+                  type="button"
+                  :class="['pill', { active: selectedType === type }]"
+                  :disabled="isInputDisabled"
+                  @click="selectedType = type"
+                >
+                  {{ type }}
+                </button>
+              </div>
+            </div>
+
+            <div class="control-row">
+              <div class="pill-group fill">
+                <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handleBull('OB')">OB</button>
+                <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handleBull('IB')">IB</button>
+                <button type="button" class="pill danger" :disabled="isInputDisabled" @click="handleMiss">MISS</button>
+              </div>
+            </div>
+
+            <div class="numbers-grid">
               <button
-                v-for="type in throwTypes"
-                :key="type"
+                v-for="number in 20"
+                :key="number"
                 type="button"
-                :class="['pill', { active: selectedType === type }]"
+                class="number-btn"
                 :disabled="isInputDisabled"
-                @click="selectedType = type"
+                @click="handleNumberClick(number)"
               >
-                {{ type }}
+                {{ number }}
               </button>
             </div>
-          </div>
-
-          <div class="control-row">
-            <div class="pill-group fill">
-              <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handleBull('OB')">OB</button>
-              <button type="button" class="pill secondary" :disabled="isInputDisabled" @click="handleBull('IB')">IB</button>
-              <button type="button" class="pill danger" :disabled="isInputDisabled" @click="handleMiss">MISS</button>
-            </div>
-          </div>
-
-          <div class="numbers-grid">
-            <button
-              v-for="number in 20"
-              :key="number"
-              type="button"
-              class="number-btn"
-              :disabled="isInputDisabled"
-              @click="handleNumberClick(number)"
-            >
-              {{ number }}
-            </button>
-          </div>
+          </template>
         </template>
       </div>
     </section>
 
     <section v-else-if="isFinished" class="panel">
       <h2>結果</h2>
-      <ul class="result-list">
+      <template v-if="game.mode === GAME_MODES.CRICKET_PRACTICE">
+        <div class="practice-summary">
+          <div class="summary-card">
+            <p class="label">合計投数</p>
+            <p class="value">{{ practiceThrowCount }}</p>
+          </div>
+          <div class="summary-card">
+            <p class="label">経過時間</p>
+            <p class="value">{{ practiceElapsed }}</p>
+          </div>
+        </div>
+        <div class="practice-results">
+          <div v-for="target in PRACTICE_TARGETS" :key="target" class="practice-result-card">
+            <p class="label">{{ target === 'BULL' ? 'BULL' : target }}</p>
+            <div class="result-lines">
+              <template v-if="target === 'BULL'">
+                <span>OUTER: {{ practiceTargetStats[target].OB }}</span>
+                <span>INNER: {{ practiceTargetStats[target].IB }}</span>
+                <span>MISS: {{ practiceTargetStats[target].MISS }}</span>
+              </template>
+              <template v-else>
+                <span>S: {{ practiceTargetStats[target].S }}</span>
+                <span>D: {{ practiceTargetStats[target].D }}</span>
+                <span>T: {{ practiceTargetStats[target].T }}</span>
+                <span>MISS: {{ practiceTargetStats[target].MISS }}</span>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+      <ul v-else class="result-list">
         <li v-for="player in resultPlayers" :key="player.id" class="result-item">
           <span class="name">{{ player.name }}</span>
           <span class="score">{{ scoreSuffix() }}: {{ displayScore(player) }}</span>
@@ -540,7 +798,9 @@ const resultPlayers = computed(() => {
       </ul>
       <div class="actions">
         <button class="ghost" type="button" :disabled="!hasHistory" @click="undoThrow">UNDO</button>
-        <button class="primary" type="button" @click="resetScores">もう一度プレイ</button>
+        <button class="primary" type="button" @click="game.mode === GAME_MODES.CRICKET_PRACTICE ? resetPracticeSession() : resetScores()">
+          もう一度プレイ
+        </button>
         <button class="ghost" type="button" @click="newGame">新しいゲーム</button>
       </div>
     </section>
@@ -774,6 +1034,53 @@ h1 {
   color: #111827;
 }
 
+.practice-status {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.practice-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px;
+  background: #f9fafb;
+}
+
+.practice-card .label {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.practice-card .value {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.practice-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 8px;
+}
+
+.practice-cell {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 8px;
+  background: #f9fafb;
+}
+
+.practice-cell .label {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.practice-cell .value {
+  font-weight: 700;
+  color: #111827;
+}
+
 .controls {
   margin-top: 16px;
   display: flex;
@@ -788,6 +1095,16 @@ h1 {
 
 .control-head .pill-group {
   flex-wrap: wrap;
+}
+
+.control-head .value.small {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.button-row {
+  display: flex;
+  gap: 8px;
 }
 
 .dartboard-block {
@@ -809,6 +1126,12 @@ h1 {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.practice-input {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
 }
 
 .pill-group {
@@ -899,6 +1222,57 @@ h1 {
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   background: #f9fafb;
+}
+
+.practice-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.summary-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px;
+  background: #f9fafb;
+}
+
+.summary-card .label {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.summary-card .value {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.practice-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.practice-result-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px;
+  background: #f9fafb;
+}
+
+.practice-result-card .label {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 8px;
+}
+
+.result-lines {
+  display: grid;
+  gap: 4px;
+  font-weight: 600;
+  color: #111827;
 }
 
 .actions {
